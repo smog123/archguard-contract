@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = [
+    "contracts/registry",
+    "contracts/extender",
+]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.84"
+
+[workspace.dependencies]
+# Pin the exact SDK version (no caret range). 27.x is the current stable major
+# release; do not use any `-rc` pre-release version.
+soroban-sdk = "=27.0.5"
