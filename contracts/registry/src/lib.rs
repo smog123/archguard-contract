@@ -164,4 +164,54 @@ impl RegistryContract {
 
         Ok(id)
     }
+
+    /// Removes a watched entry and drops its id from the org's entry list.
+    ///
+    /// # Auth
+    ///
+    /// Requires auth from `org` (the entry owner).
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::OrgNotFound`] if the org is not registered.
+    /// - [`Error::EntryNotFound`] if no entry exists with `entry_id`.
+    /// - [`Error::NotEntryOwner`] if the entry belongs to a different org.
+    pub fn remove_watched_entry(env: Env, org: Address, entry_id: u64) -> Result<(), Error> {
+        org.require_auth();
+
+        env.storage()
+            .instance()
+            .get::<DataKey, OrgConfig>(&DataKey::Org(org.clone()))
+            .ok_or(Error::OrgNotFound)?;
+
+        let entry = env
+            .storage()
+            .persistent()
+            .get::<DataKey, WatchedEntry>(&DataKey::WatchedEntry(entry_id))
+            .ok_or(Error::EntryNotFound)?;
+        if entry.org != org {
+            return Err(Error::NotEntryOwner);
+        }
+
+        env.storage()
+            .persistent()
+            .remove(&DataKey::WatchedEntry(entry_id));
+
+        let mut org_ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::OrgEntryIds(org.clone()))
+            .unwrap_or(Vec::new(&env));
+        if let Some(index) = org_ids.first_index_of(&entry_id) {
+            org_ids.remove(index);
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::OrgEntryIds(org.clone()), &org_ids);
+
+        extend_persistent_ttl(&env, &DataKey::OrgEntryIds(org));
+        extend_instance_ttl(&env);
+
+        Ok(())
+    }
 }
