@@ -7,7 +7,7 @@ mod types;
 mod test;
 
 use errors::Error;
-use soroban_sdk::{contract, contractimpl, Address, Env};
+use soroban_sdk::{contract, contractimpl, token::TokenClient, Address, Env};
 use types::{DataKey, Operator};
 
 /// Re-extend a stored entry once its remaining TTL drops below this many
@@ -35,6 +35,14 @@ fn load_operator(env: &Env) -> Result<Operator, Error> {
         .instance()
         .get::<DataKey, Operator>(&DataKey::Operator)
         .ok_or(Error::NotOperator)
+}
+
+/// Returns the org's prepaid balance, defaulting to 0 when unset.
+fn get_balance(env: &Env, org: &Address) -> i128 {
+    env.storage()
+        .instance()
+        .get::<DataKey, i128>(&DataKey::OrgBalance(org.clone()))
+        .unwrap_or(0)
 }
 
 /// `archguard-extender` — fund custody and extension accounting for
@@ -71,5 +79,38 @@ impl ExtenderContract {
             .instance()
             .set(&DataKey::Operator, &Operator { operator, native_asset });
         extend_instance_ttl(&env);
+    }
+
+    /// Deposits native XLM from `org` into the extender's custody and
+    /// credits `org`'s prepaid balance, in stroops.
+    ///
+    /// The transfer is executed against the native XLM SAC contract whose
+    /// address was injected at init time.
+    ///
+    /// # Auth
+    ///
+    /// Requires auth from `org` (the depositor).
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::NotOperator`] if the contract is not initialized.
+    /// - [`Error::InvalidAmount`] if `amount <= 0`.
+    pub fn deposit(env: Env, org: Address, amount: i128) -> Result<(), Error> {
+        org.require_auth();
+        if amount <= 0 {
+            return Err(Error::InvalidAmount);
+        }
+        let op = load_operator(&env)?;
+
+        let token = TokenClient::new(&env, &op.native_asset);
+        token.transfer(&org, &env.current_contract_address(), &amount);
+
+        let new_balance = get_balance(&env, &org) + amount;
+        env.storage()
+            .instance()
+            .set(&DataKey::OrgBalance(org.clone()), &new_balance);
+        extend_instance_ttl(&env);
+
+        Ok(())
     }
 }
