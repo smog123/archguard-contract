@@ -5,8 +5,8 @@
 
 use super::*;
 use soroban_sdk::{
-    symbol_short, testutils::{Address as _, Events}, token::TokenClient, vec, xdr, Address, Env,
-    IntoVal, Map, Symbol, TryFromVal, TryIntoVal, Val, Vec,
+    symbol_short, testutils::{Address as _, Events}, token::{StellarAssetClient, TokenClient},
+    vec, xdr, Address, Env, IntoVal, Map, Symbol, TryFromVal, TryIntoVal, Val, Vec,
 };
 
 /// Deploys the extender, initializes it with a fresh operator and the
@@ -28,6 +28,12 @@ fn setup() -> (Env, Address, Address, Address, Address) {
 /// Builds a token client for the native asset.
 fn native_token<'a>(env: &'a Env, native: &Address) -> TokenClient<'a> {
     TokenClient::new(env, native)
+}
+
+/// Mints XLM to `to` via the native asset's SAC admin client (all auth is
+/// mocked in `setup`).
+fn fund(env: &Env, native: &Address, to: &Address, amount: i128) {
+    StellarAssetClient::new(env, native).mint(to, &amount);
 }
 
 /// Returns `(topics, data)` of the event emitted by `contract` at index
@@ -74,4 +80,129 @@ fn test_init_twice_panics() {
     let native = env.register_stellar_asset_contract_v2(Address::generate(&env)).address();
     client.init(&Address::generate(&env), &native);
     client.init(&Address::generate(&env), &native);
+}
+
+#[test]
+fn test_deposit() {
+    let (env, contract_id, org, _operator, native) = setup();
+    let client = ExtenderContractClient::new(&env, &contract_id);
+    let token = native_token(&env, &native);
+    fund(&env, &native, &org, 1_000_000);
+
+    client.deposit(&org, &250_000);
+
+    // deposited event with the org as topic and amount/balance as data.
+    let (topics, data) = emitted_event(&env, &contract_id, 0);
+    assert_eq!(
+        topics,
+        vec![&env, event_name(&env, "deposited"), org.clone().into_val(&env)]
+    );
+    let data_map: Map<Symbol, i128> = Map::try_from_val(&env, &data).unwrap();
+    assert_eq!(data_map.get(symbol_short!("amount")).unwrap(), 250_000);
+    assert_eq!(data_map.get(symbol_short!("balance")).unwrap(), 250_000);
+
+    // Reads come after the event assertions (events are per-invocation).
+    assert_eq!(client.get_balance(&org), 250_000);
+    assert_eq!(token.balance(&contract_id), 250_000);
+}
+
+#[test]
+fn test_deposit_invalid_amount() {
+    let (env, contract_id, org, _operator, _native) = setup();
+    let client = ExtenderContractClient::new(&env, &contract_id);
+    assert_eq!(client.try_deposit(&org, &0), Err(Ok(Error::InvalidAmount)));
+    assert_eq!(client.try_deposit(&org, &-5), Err(Ok(Error::InvalidAmount)));
+    assert_eq!(client.get_balance(&org), 0);
+}
+
+#[test]
+fn test_deposit_not_initialized() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(ExtenderContract, ());
+    let client = ExtenderContractClient::new(&env, &contract_id);
+    // No init: no operator configured -> NotOperator.
+    assert_eq!(
+        client.try_deposit(&Address::generate(&env), &100),
+        Err(Ok(Error::NotOperator))
+    );
+}
+
+#[test]
+#[should_panic]
+fn test_deposit_requires_auth() {
+    let env = Env::default();
+    let contract_id = env.register(ExtenderContract, ());
+    let client = ExtenderContractClient::new(&env, &contract_id);
+    client.init(
+        &Address::generate(&env),
+        &env.register_stellar_asset_contract_v2(Address::generate(&env)).address(),
+    );
+    // No mock_all_auths: require_auth on `org` must fail.
+    client.deposit(&Address::generate(&env), &100);
+}
+
+#[test]
+fn test_withdraw() {
+    let (env, contract_id, org, _operator, native) = setup();
+    let client = ExtenderContractClient::new(&env, &contract_id);
+    let token = native_token(&env, &native);
+    fund(&env, &native, &org, 1_000_000);
+    client.deposit(&org, &500_000);
+    client.withdraw(&org, &200_000);
+
+    // withdrawn event with the org as topic.
+    let (topics, data) = emitted_event(&env, &contract_id, 0);
+    assert_eq!(
+        topics,
+        vec![&env, event_name(&env, "withdrawn"), org.clone().into_val(&env)]
+    );
+    let data_map: Map<Symbol, i128> = Map::try_from_val(&env, &data).unwrap();
+    assert_eq!(data_map.get(symbol_short!("amount")).unwrap(), 200_000);
+    assert_eq!(data_map.get(symbol_short!("balance")).unwrap(), 300_000);
+
+    // Reads come after the event assertions (events are per-invocation).
+    assert_eq!(client.get_balance(&org), 300_000);
+    assert_eq!(token.balance(&contract_id), 300_000);
+}
+
+#[test]
+fn test_withdraw_insufficient_balance() {
+    let (env, contract_id, org, _operator, native) = setup();
+    let client = ExtenderContractClient::new(&env, &contract_id);
+    let token = native_token(&env, &native);
+    fund(&env, &native, &org, 1_000_000);
+    client.deposit(&org, &100_000);
+
+    assert_eq!(
+        client.try_withdraw(&org, &100_001),
+        Err(Ok(Error::InsufficientBalance))
+    );
+    // Balance is unchanged and an unfunded org cannot withdraw at all.
+    assert_eq!(client.get_balance(&org), 100_000);
+    assert_eq!(
+        client.try_withdraw(&Address::generate(&env), &1),
+        Err(Ok(Error::InsufficientBalance))
+    );
+}
+
+#[test]
+fn test_withdraw_invalid_amount() {
+    let (env, contract_id, org, _operator, _native) = setup();
+    let client = ExtenderContractClient::new(&env, &contract_id);
+    assert_eq!(client.try_withdraw(&org, &0), Err(Ok(Error::InvalidAmount)));
+    assert_eq!(client.try_withdraw(&org, &-1), Err(Ok(Error::InvalidAmount)));
+}
+
+#[test]
+#[should_panic]
+fn test_withdraw_requires_auth() {
+    let env = Env::default();
+    let contract_id = env.register(ExtenderContract, ());
+    let client = ExtenderContractClient::new(&env, &contract_id);
+    client.init(
+        &Address::generate(&env),
+        &env.register_stellar_asset_contract_v2(Address::generate(&env)).address(),
+    );
+    client.withdraw(&Address::generate(&env), &100);
 }
