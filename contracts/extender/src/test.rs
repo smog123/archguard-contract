@@ -206,3 +206,88 @@ fn test_withdraw_requires_auth() {
     );
     client.withdraw(&Address::generate(&env), &100);
 }
+
+#[test]
+fn test_record_extension_cost() {
+    let (env, contract_id, org, _operator, native) = setup();
+    let client = ExtenderContractClient::new(&env, &contract_id);
+    fund(&env, &native, &org, 1_000_000);
+    client.deposit(&org, &500_000);
+
+    client.record_extension_cost(&org, &75_000);
+
+    // extension_charged event carries cost and resulting balance.
+    let (topics, data) = emitted_event(&env, &contract_id, 0);
+    assert_eq!(
+        topics,
+        vec![&env, event_name(&env, "extension_charged"), org.clone().into_val(&env)]
+    );
+    let data_map: Map<Symbol, i128> = Map::try_from_val(&env, &data).unwrap();
+    assert_eq!(data_map.get(symbol_short!("cost")).unwrap(), 75_000);
+    assert_eq!(data_map.get(symbol_short!("balance")).unwrap(), 425_000);
+
+    assert_eq!(client.get_balance(&org), 425_000);
+}
+
+#[test]
+fn test_record_extension_cost_insufficient_balance() {
+    let (env, contract_id, org, _operator, native) = setup();
+    let client = ExtenderContractClient::new(&env, &contract_id);
+    fund(&env, &native, &org, 1_000_000);
+    client.deposit(&org, &100_000);
+
+    // Underfunded: no revert, balance unchanged, insufficient_balance emitted.
+    client.record_extension_cost(&org, &150_000);
+
+    let (topics, data) = emitted_event(&env, &contract_id, 0);
+    assert_eq!(
+        topics,
+        vec![&env, event_name(&env, "insufficient_balance"), org.clone().into_val(&env)]
+    );
+    let data_map: Map<Symbol, i128> = Map::try_from_val(&env, &data).unwrap();
+    assert_eq!(data_map.get(symbol_short!("cost")).unwrap(), 150_000);
+    assert_eq!(data_map.get(symbol_short!("balance")).unwrap(), 100_000);
+
+    // The balance was left untouched.
+    assert_eq!(client.get_balance(&org), 100_000);
+}
+
+#[test]
+fn test_record_extension_cost_invalid_amount() {
+    let (env, contract_id, org, _operator, native) = setup();
+    let client = ExtenderContractClient::new(&env, &contract_id);
+    fund(&env, &native, &org, 1_000_000);
+    client.deposit(&org, &100_000);
+    assert_eq!(
+        client.try_record_extension_cost(&org, &-1),
+        Err(Ok(Error::InvalidAmount))
+    );
+}
+
+#[test]
+fn test_record_extension_cost_not_initialized() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(ExtenderContract, ());
+    let client = ExtenderContractClient::new(&env, &contract_id);
+    assert_eq!(
+        client.try_record_extension_cost(&Address::generate(&env), &100),
+        Err(Ok(Error::NotOperator))
+    );
+}
+
+#[test]
+#[should_panic]
+fn test_record_extension_cost_requires_operator_auth() {
+    // The keeper (operator) authorizes this call — NOT the org. Without any
+    // mocked auth, the operator's require_auth must fail even though the
+    // caller presents an org address.
+    let env = Env::default();
+    let contract_id = env.register(ExtenderContract, ());
+    let client = ExtenderContractClient::new(&env, &contract_id);
+    client.init(
+        &Address::generate(&env),
+        &env.register_stellar_asset_contract_v2(Address::generate(&env)).address(),
+    );
+    client.record_extension_cost(&Address::generate(&env), &10_000);
+}
