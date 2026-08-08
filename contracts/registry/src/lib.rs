@@ -61,4 +61,31 @@ impl RegistryContract {
         env.storage().instance().set(&DataKey::NextEntryId, &0u64);
         extend_instance_ttl(&env);
     }
+
+    /// Registers a new org with the registry.
+    ///
+    /// Stores the org's [`OrgConfig`]. Only the SHA-256 hash of the
+    /// notification webhook is stored on-chain — never the raw URL
+    /// (storage-cost rationale); the off-chain keeper resolves the hash.
+    ///
+    /// # Auth
+    ///
+    /// Requires auth from `org` (the org self-registers).
+    ///
+    /// # Errors
+    ///
+    /// Panics if the org is already registered.
+    pub fn register_org(env: Env, org: Address, admin: Address, notify_webhook: BytesN<32>) {
+        org.require_auth();
+        if env.storage().instance().has(&DataKey::Org(org.clone())) {
+            panic!("org already registered");
+        }
+        let config = OrgConfig {
+            admin,
+            notify_webhook,
+            active: true,
+        };
+        env.storage().instance().set(&DataKey::Org(org.clone()), &config);
+        extend_instance_ttl(&env);
+    }
 }
