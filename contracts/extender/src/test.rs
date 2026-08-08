@@ -170,7 +170,6 @@ fn test_withdraw() {
 fn test_withdraw_insufficient_balance() {
     let (env, contract_id, org, _operator, native) = setup();
     let client = ExtenderContractClient::new(&env, &contract_id);
-    let token = native_token(&env, &native);
     fund(&env, &native, &org, 1_000_000);
     client.deposit(&org, &100_000);
 
@@ -290,4 +289,58 @@ fn test_record_extension_cost_requires_operator_auth() {
         &env.register_stellar_asset_contract_v2(Address::generate(&env)).address(),
     );
     client.record_extension_cost(&Address::generate(&env), &10_000);
+}
+
+#[test]
+fn test_get_balance_defaults_to_zero() {
+    let (env, contract_id, _org, _operator, _native) = setup();
+    let client = ExtenderContractClient::new(&env, &contract_id);
+    // Read-only: never funded, never touched -> 0. No auth needed.
+    assert_eq!(client.get_balance(&Address::generate(&env)), 0);
+}
+
+#[test]
+fn test_set_operator() {
+    let (env, contract_id, _org, _operator, _native) = setup();
+    let client = ExtenderContractClient::new(&env, &contract_id);
+
+    let before: Operator = env.as_contract(&contract_id, || {
+        env.storage().instance().get(&DataKey::Operator).unwrap()
+    });
+    let new_operator = Address::generate(&env);
+    client.set_operator(&new_operator);
+
+    // The operator rotated; the injected native asset address is preserved.
+    let after: Operator = env.as_contract(&contract_id, || {
+        env.storage().instance().get(&DataKey::Operator).unwrap()
+    });
+    assert_eq!(after.operator, new_operator);
+    assert_eq!(after.native_asset, before.native_asset);
+}
+
+#[test]
+fn test_set_operator_not_initialized() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(ExtenderContract, ());
+    let client = ExtenderContractClient::new(&env, &contract_id);
+    // No init: no operator configured -> NotOperator.
+    assert_eq!(
+        client.try_set_operator(&Address::generate(&env)),
+        Err(Ok(Error::NotOperator))
+    );
+}
+
+#[test]
+#[should_panic]
+fn test_set_operator_requires_current_operator_auth() {
+    let env = Env::default();
+    let contract_id = env.register(ExtenderContract, ());
+    let client = ExtenderContractClient::new(&env, &contract_id);
+    client.init(
+        &Address::generate(&env),
+        &env.register_stellar_asset_contract_v2(Address::generate(&env)).address(),
+    );
+    // No mock_all_auths: the current operator must sign the rotation.
+    client.set_operator(&Address::generate(&env));
 }
