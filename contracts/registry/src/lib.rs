@@ -8,7 +8,10 @@ mod test;
 
 use errors::Error;
 use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, Val, Vec};
-use types::{DataKey, Durability, OrgConfig, WatchedEntry};
+use types::{
+    DataKey, Durability, EntryAdded, EntryPolicyUpdated, EntryRemoved, OrgConfig,
+    OrgDeactivated, OrgRegistered, WatchedEntry,
+};
 
 /// Re-extend a stored entry once its remaining TTL drops below this many
 /// ledgers (~1 day at 5s/ledger).
@@ -87,6 +90,8 @@ impl RegistryContract {
         };
         env.storage().instance().set(&DataKey::Org(org.clone()), &config);
         extend_instance_ttl(&env);
+
+        OrgRegistered { org, config }.publish(&env);
     }
 
     /// Adds a new watched entry for an org and returns its id.
@@ -162,6 +167,8 @@ impl RegistryContract {
         extend_persistent_ttl(&env, &DataKey::OrgEntryIds(org.clone()));
         extend_instance_ttl(&env);
 
+        EntryAdded { entry_id: id, entry }.publish(&env);
+
         Ok(id)
     }
 
@@ -211,6 +218,8 @@ impl RegistryContract {
 
         extend_persistent_ttl(&env, &DataKey::OrgEntryIds(org));
         extend_instance_ttl(&env);
+
+        EntryRemoved { entry_id }.publish(&env);
 
         Ok(())
     }
@@ -266,6 +275,8 @@ impl RegistryContract {
             .set(&DataKey::WatchedEntry(entry_id), &entry);
         extend_persistent_ttl(&env, &DataKey::WatchedEntry(entry_id));
         extend_instance_ttl(&env);
+
+        EntryPolicyUpdated { entry_id, entry }.publish(&env);
 
         Ok(())
     }
@@ -339,6 +350,8 @@ impl RegistryContract {
         config.active = false;
         env.storage().instance().set(&DataKey::Org(org.clone()), &config);
         extend_instance_ttl(&env);
+
+        OrgDeactivated { org }.publish(&env);
 
         Ok(())
     }

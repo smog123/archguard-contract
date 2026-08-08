@@ -1,6 +1,6 @@
 //! Shared types for the `archguard-registry` contract.
 
-use soroban_sdk::{contracttype, Address, BytesN, Val};
+use soroban_sdk::{contractevent, contracttype, Address, BytesN, Val};
 
 /// Storage keys used by the registry contract.
 ///
@@ -56,8 +56,11 @@ pub struct OrgConfig {
 
 /// A single watched entry: one contract storage key the keeper watches and
 /// auto-extends.
+///
+/// Note: this type deliberately does **not** derive `PartialEq`/`Eq` —
+/// SDK 27's `Val` (used by the optional `key` field) implements neither.
 #[contracttype]
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct WatchedEntry {
     /// Globally unique entry id, assigned by [`super::RegistryContract`].
     pub id: u64,
@@ -78,4 +81,48 @@ pub struct WatchedEntry {
     pub auto_extend: bool,
     /// Ledger timestamp when the entry was added.
     pub created_at: u64,
+}
+
+/// Emitted when a new org registers. Topics: `["org_registered", org]`.
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct OrgRegistered {
+    #[topic]
+    pub org: Address,
+    pub config: OrgConfig,
+}
+
+/// Emitted when a watched entry is added. Topics: `["entry_added", id]`.
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct EntryAdded {
+    #[topic]
+    pub entry_id: u64,
+    pub entry: WatchedEntry,
+}
+
+/// Emitted when a watched entry is removed. Topics: `["entry_removed", id]`.
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct EntryRemoved {
+    #[topic]
+    pub entry_id: u64,
+}
+
+/// Emitted when a watched entry's extension policy changes.
+/// Topics: `["entry_policy_updated", id]`.
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct EntryPolicyUpdated {
+    #[topic]
+    pub entry_id: u64,
+    pub entry: WatchedEntry,
+}
+
+/// Emitted when an org is deactivated. Topics: `["org_deactivated", org]`.
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct OrgDeactivated {
+    #[topic]
+    pub org: Address,
 }
