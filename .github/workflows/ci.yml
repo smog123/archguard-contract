@@ -23,8 +23,12 @@ jobs:
 
       - name: Install stellar-cli
         # GitHub-hosted runners don't ship `stellar`; install the pinned CLI.
-        # It is also required by `stellar contract build` below.
-        run: cargo install --locked stellar-cli --version 27.1.0
+        # stellar-cli's dependency tree pulls libdbus-sys, which needs the
+        # dbus system library present at build time.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev
+          cargo install --locked stellar-cli --version 27.1.0
 
       - name: Build registry contract (wasm)
         run: cd contracts/registry && stellar contract build
