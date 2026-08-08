@@ -13,3 +13,8 @@ rust-version = "1.84"
 # Pin the exact SDK version (no caret range). 27.x is the current stable major
 # release; do not use any `-rc` pre-release version.
 soroban-sdk = "=27.0.5"
+
+[profile.release]
+# Required by `stellar contract build` — prevents silent integer overflow in
+# release builds of the wasm artifacts.
+overflow-checks = true
