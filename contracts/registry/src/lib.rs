@@ -269,4 +269,50 @@ impl RegistryContract {
 
         Ok(())
     }
+
+    /// Returns all watched entries owned by an org, in insertion order.
+    ///
+    /// Read-only: does **not** require auth.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::OrgNotFound`] if the org is not registered.
+    pub fn get_org_entries(env: Env, org: Address) -> Result<Vec<WatchedEntry>, Error> {
+        env.storage()
+            .instance()
+            .get::<DataKey, OrgConfig>(&DataKey::Org(org.clone()))
+            .ok_or(Error::OrgNotFound)?;
+
+        let ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::OrgEntryIds(org))
+            .unwrap_or(Vec::new(&env));
+
+        let mut entries: Vec<WatchedEntry> = Vec::new(&env);
+        for id in ids.iter() {
+            if let Some(entry) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, WatchedEntry>(&DataKey::WatchedEntry(id))
+            {
+                entries.push_back(entry);
+            }
+        }
+        Ok(entries)
+    }
+
+    /// Returns a single watched entry by id.
+    ///
+    /// Read-only: does **not** require auth.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::EntryNotFound`] if no entry exists with `entry_id`.
+    pub fn get_entry(env: Env, entry_id: u64) -> Result<WatchedEntry, Error> {
+        env.storage()
+            .persistent()
+            .get::<DataKey, WatchedEntry>(&DataKey::WatchedEntry(entry_id))
+            .ok_or(Error::EntryNotFound)
+    }
 }
