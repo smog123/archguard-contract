@@ -243,3 +243,143 @@ fn test_add_watched_entry_requires_auth() {
         &true,
     );
 }
+
+#[test]
+fn test_remove_watched_entry() {
+    let (env, contract_id, org, _admin, _webhook) = setup();
+    let client = RegistryContractClient::new(&env, &contract_id);
+    let id = client.add_watched_entry(
+        &org, &Address::generate(&env), &Durability::Persistent, &None::<Bytes>, &1_000, &10_000,
+        &true,
+    );
+
+    client.remove_watched_entry(&org, &id);
+
+    // entry_removed event with the entry id as topic.
+    let (topics, _) = emitted_event(&env, &contract_id, 0);
+    assert_eq!(
+        topics,
+        vec![&env, event_name(&env, "entry_removed"), id.into_val(&env)]
+    );
+
+    // Entry is gone and the org's list is empty.
+    // (matches! because WatchedEntry has no PartialEq — its key is a Val-adjacent Bytes.)
+    assert!(matches!(client.try_get_entry(&id), Err(Ok(Error::EntryNotFound))));
+    assert_eq!(client.get_org_entries(&org).len(), 0);
+}
+
+#[test]
+fn test_remove_watched_entry_not_owner() {
+    let (env, contract_id, org, _admin, _webhook) = setup();
+    let other = Address::generate(&env);
+    let client = RegistryContractClient::new(&env, &contract_id);
+    client.register_org(&other, &Address::generate(&env), &BytesN::from_array(&env, &[2u8; 32]));
+    let id = client.add_watched_entry(
+        &org, &Address::generate(&env), &Durability::Persistent, &None::<Bytes>, &1_000, &10_000,
+        &true,
+    );
+    assert_eq!(
+        client.try_remove_watched_entry(&other, &id),
+        Err(Ok(Error::NotEntryOwner))
+    );
+}
+
+#[test]
+fn test_remove_watched_entry_not_found() {
+    let (env, contract_id, org, _admin, _webhook) = setup();
+    let client = RegistryContractClient::new(&env, &contract_id);
+    assert_eq!(
+        client.try_remove_watched_entry(&org, &999),
+        Err(Ok(Error::EntryNotFound))
+    );
+}
+
+#[test]
+#[should_panic]
+fn test_remove_watched_entry_requires_auth() {
+    let env = Env::default();
+    let contract_id = env.register(RegistryContract, ());
+    let client = RegistryContractClient::new(&env, &contract_id);
+    client.init();
+    client.remove_watched_entry(&Address::generate(&env), &1);
+}
+
+#[test]
+fn test_update_entry_policy() {
+    let (env, contract_id, org, _admin, _webhook) = setup();
+    let client = RegistryContractClient::new(&env, &contract_id);
+    let id = client.add_watched_entry(
+        &org, &Address::generate(&env), &Durability::Persistent, &None::<Bytes>, &1_000, &10_000,
+        &true,
+    );
+
+    client.update_entry_policy(&org, &id, &2_000, &20_000, &false);
+
+    // entry_policy_updated event carries the updated entry.
+    let (topics, data) = emitted_event(&env, &contract_id, 0);
+    assert_eq!(
+        topics,
+        vec![&env, event_name(&env, "entry_policy_updated"), id.into_val(&env)]
+    );
+    let data_map: Map<Symbol, WatchedEntry> = Map::try_from_val(&env, &data).unwrap();
+    let event_entry = data_map.get(symbol_short!("entry")).unwrap();
+    assert_eq!(event_entry.extend_threshold_ledgers, 2_000);
+    assert_eq!(event_entry.extend_to_ledgers, 20_000);
+    assert!(!event_entry.auto_extend);
+
+    // The stored entry reflects the new policy.
+    let stored = client.get_entry(&id);
+    assert_eq!(stored.extend_threshold_ledgers, 2_000);
+    assert_eq!(stored.extend_to_ledgers, 20_000);
+    assert!(!stored.auto_extend);
+}
+
+#[test]
+fn test_update_entry_policy_invalid_threshold() {
+    let (env, contract_id, org, _admin, _webhook) = setup();
+    let client = RegistryContractClient::new(&env, &contract_id);
+    let id = client.add_watched_entry(
+        &org, &Address::generate(&env), &Durability::Persistent, &None::<Bytes>, &1_000, &10_000,
+        &true,
+    );
+    assert_eq!(
+        client.try_update_entry_policy(&org, &id, &10_000, &10_000, &true),
+        Err(Ok(Error::InvalidThreshold))
+    );
+}
+
+#[test]
+fn test_update_entry_policy_not_found() {
+    let (env, contract_id, org, _admin, _webhook) = setup();
+    let client = RegistryContractClient::new(&env, &contract_id);
+    assert_eq!(
+        client.try_update_entry_policy(&org, &999, &1_000, &10_000, &true),
+        Err(Ok(Error::EntryNotFound))
+    );
+}
+
+#[test]
+fn test_update_entry_policy_not_owner() {
+    let (env, contract_id, org, _admin, _webhook) = setup();
+    let other = Address::generate(&env);
+    let client = RegistryContractClient::new(&env, &contract_id);
+    client.register_org(&other, &Address::generate(&env), &BytesN::from_array(&env, &[2u8; 32]));
+    let id = client.add_watched_entry(
+        &org, &Address::generate(&env), &Durability::Persistent, &None::<Bytes>, &1_000, &10_000,
+        &true,
+    );
+    assert_eq!(
+        client.try_update_entry_policy(&other, &id, &1_000, &10_000, &true),
+        Err(Ok(Error::NotEntryOwner))
+    );
+}
+
+#[test]
+#[should_panic]
+fn test_update_entry_policy_requires_auth() {
+    let env = Env::default();
+    let contract_id = env.register(RegistryContract, ());
+    let client = RegistryContractClient::new(&env, &contract_id);
+    client.init();
+    client.update_entry_policy(&Address::generate(&env), &1, &1_000, &10_000, &true);
+}
