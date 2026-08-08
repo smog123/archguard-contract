@@ -315,4 +315,31 @@ impl RegistryContract {
             .get::<DataKey, WatchedEntry>(&DataKey::WatchedEntry(entry_id))
             .ok_or(Error::EntryNotFound)
     }
+
+    /// Deactivates an org, preventing it from adding new watched entries.
+    ///
+    /// Existing entries remain readable; only the active flag flips.
+    /// Deactivating an already-inactive org is a no-op.
+    ///
+    /// # Auth
+    ///
+    /// Requires auth from `org` itself.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::OrgNotFound`] if the org is not registered.
+    pub fn deactivate_org(env: Env, org: Address) -> Result<(), Error> {
+        org.require_auth();
+
+        let mut config = env
+            .storage()
+            .instance()
+            .get::<DataKey, OrgConfig>(&DataKey::Org(org.clone()))
+            .ok_or(Error::OrgNotFound)?;
+        config.active = false;
+        env.storage().instance().set(&DataKey::Org(org.clone()), &config);
+        extend_instance_ttl(&env);
+
+        Ok(())
+    }
 }
