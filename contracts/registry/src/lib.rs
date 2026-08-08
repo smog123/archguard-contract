@@ -88,4 +88,80 @@ impl RegistryContract {
         env.storage().instance().set(&DataKey::Org(org.clone()), &config);
         extend_instance_ttl(&env);
     }
+
+    /// Adds a new watched entry for an org and returns its id.
+    ///
+    /// Ids are assigned from the `NextEntryId` counter, which starts at 0
+    /// and is incremented after every successful call, so the first entry
+    /// receives id 1. The entry record and the org's id list are written to
+    /// persistent storage and their TTL is extended immediately, per the
+    /// Archguard storage policy.
+    ///
+    /// # Auth
+    ///
+    /// Requires auth from `org` (the org that will own the entry).
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::OrgNotFound`] if the org is not registered.
+    /// - [`Error::OrgInactive`] if the org has been deactivated.
+    /// - [`Error::InvalidThreshold`] if `extend_threshold_ledgers` is not
+    ///   strictly below `extend_to_ledgers`.
+    pub fn add_watched_entry(
+        env: Env,
+        org: Address,
+        contract_id: Address,
+        durability: Durability,
+        key: Option<Val>,
+        extend_threshold_ledgers: u32,
+        extend_to_ledgers: u32,
+        auto_extend: bool,
+    ) -> Result<u64, Error> {
+        org.require_auth();
+
+        let config = env
+            .storage()
+            .instance()
+            .get::<DataKey, OrgConfig>(&DataKey::Org(org.clone()))
+            .ok_or(Error::OrgNotFound)?;
+        if !config.active {
+            return Err(Error::OrgInactive);
+        }
+        if extend_threshold_ledgers >= extend_to_ledgers {
+            return Err(Error::InvalidThreshold);
+        }
+
+        let id: u64 =
+            env.storage().instance().get(&DataKey::NextEntryId).unwrap_or(0) + 1;
+        env.storage().instance().set(&DataKey::NextEntryId, &id);
+
+        let entry = WatchedEntry {
+            id,
+            org: org.clone(),
+            contract_id,
+            durability,
+            key,
+            extend_threshold_ledgers,
+            extend_to_ledgers,
+            auto_extend,
+            created_at: env.ledger().timestamp(),
+        };
+        env.storage().persistent().set(&DataKey::WatchedEntry(id), &entry);
+
+        let mut org_ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::OrgEntryIds(org.clone()))
+            .unwrap_or(Vec::new(&env));
+        org_ids.push_back(id);
+        env.storage()
+            .persistent()
+            .set(&DataKey::OrgEntryIds(org.clone()), &org_ids);
+
+        extend_persistent_ttl(&env, &DataKey::WatchedEntry(id));
+        extend_persistent_ttl(&env, &DataKey::OrgEntryIds(org.clone()));
+        extend_instance_ttl(&env);
+
+        Ok(id)
+    }
 }
