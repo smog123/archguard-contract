@@ -113,4 +113,40 @@ impl ExtenderContract {
 
         Ok(())
     }
+
+    /// Withdraws native XLM from the extender back to `org`, debiting the
+    /// org's prepaid balance, in stroops.
+    ///
+    /// # Auth
+    ///
+    /// Requires auth from `org`.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::NotOperator`] if the contract is not initialized.
+    /// - [`Error::InvalidAmount`] if `amount <= 0`.
+    /// - [`Error::InsufficientBalance`] if `amount` exceeds the org's
+    ///   prepaid balance.
+    pub fn withdraw(env: Env, org: Address, amount: i128) -> Result<(), Error> {
+        org.require_auth();
+        if amount <= 0 {
+            return Err(Error::InvalidAmount);
+        }
+        let balance = get_balance(&env, &org);
+        if amount > balance {
+            return Err(Error::InsufficientBalance);
+        }
+        let op = load_operator(&env)?;
+
+        let token = TokenClient::new(&env, &op.native_asset);
+        token.transfer(&env.current_contract_address(), &org, &amount);
+
+        let new_balance = balance - amount;
+        env.storage()
+            .instance()
+            .set(&DataKey::OrgBalance(org.clone()), &new_balance);
+        extend_instance_ttl(&env);
+
+        Ok(())
+    }
 }
