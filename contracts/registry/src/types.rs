@@ -1,6 +1,6 @@
 //! Shared types for the `archguard-registry` contract.
 
-use soroban_sdk::{contractevent, contracttype, Address, BytesN, Val};
+use soroban_sdk::{contractevent, contracttype, Address, Bytes, BytesN};
 
 /// Storage keys used by the registry contract.
 ///
@@ -70,9 +70,14 @@ pub struct WatchedEntry {
     pub contract_id: Address,
     /// Durability category of the watched storage key.
     pub durability: Durability,
-    /// The storage key being watched, if any (absent when the whole
-    /// contract instance is watched).
-    pub key: Option<Val>,
+    /// The storage key being watched, as raw bytes, if any (absent when
+    /// the whole contract instance is watched).
+    ///
+    /// Note: the original design used `Option<Val>`, but Soroban SDK 27's
+    /// `#[contracttype]` derive requires fields to convert via `Into<ScVal>`
+    /// (std), which `Val` does not implement — `Bytes` does, and a storage
+    /// key is consumed by the off-chain keeper as raw bytes anyway.
+    pub key: Option<Bytes>,
     /// Re-extend when the remaining TTL (ledgers) drops below this value.
     pub extend_threshold_ledgers: u32,
     /// Extend the entry's TTL out to this value (ledgers).

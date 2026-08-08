@@ -7,7 +7,7 @@ mod types;
 mod test;
 
 use errors::Error;
-use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, Val, Vec};
+use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Vec};
 use types::{
     DataKey, Durability, EntryAdded, EntryPolicyUpdated, EntryRemoved, OrgConfig,
     OrgDeactivated, OrgRegistered, WatchedEntry,
@@ -96,11 +96,12 @@ impl RegistryContract {
 
     /// Adds a new watched entry for an org and returns its id.
     ///
-    /// Ids are assigned from the `NextEntryId` counter, which starts at 0
-    /// and is incremented after every successful call, so the first entry
-    /// receives id 1. The entry record and the org's id list are written to
-    /// persistent storage and their TTL is extended immediately, per the
-    /// Archguard storage policy.
+    /// `key` is the watched storage key as raw bytes (or `None` when the
+    /// whole contract instance is watched). Ids are assigned from the
+    /// `NextEntryId` counter, which starts at 0 and is incremented after
+    /// every successful call, so the first entry receives id 1. The entry
+    /// record and the org's id list are written to persistent storage and
+    /// their TTL is extended immediately, per the Archguard storage policy.
     ///
     /// # Auth
     ///
@@ -117,7 +118,7 @@ impl RegistryContract {
         org: Address,
         contract_id: Address,
         durability: Durability,
-        key: Option<Val>,
+        key: Option<Bytes>,
         extend_threshold_ledgers: u32,
         extend_to_ledgers: u32,
         auto_extend: bool,
