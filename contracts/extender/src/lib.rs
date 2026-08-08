@@ -8,7 +8,7 @@ mod test;
 
 use errors::Error;
 use soroban_sdk::{contract, contractimpl, token::TokenClient, Address, Env};
-use types::{DataKey, InsufficientBalance, Operator};
+use types::{DataKey, Deposited, ExtensionCharged, InsufficientBalance, Operator, Withdrawn};
 
 /// Re-extend a stored entry once its remaining TTL drops below this many
 /// ledgers (~1 day at 5s/ledger).
@@ -111,6 +111,8 @@ impl ExtenderContract {
             .set(&DataKey::OrgBalance(org.clone()), &new_balance);
         extend_instance_ttl(&env);
 
+        Deposited { org: org.clone(), amount, balance: new_balance }.publish(&env);
+
         Ok(())
     }
 
@@ -146,6 +148,8 @@ impl ExtenderContract {
             .instance()
             .set(&DataKey::OrgBalance(org.clone()), &new_balance);
         extend_instance_ttl(&env);
+
+        Withdrawn { org: org.clone(), amount, balance: new_balance }.publish(&env);
 
         Ok(())
     }
@@ -195,6 +199,8 @@ impl ExtenderContract {
             .instance()
             .set(&DataKey::OrgBalance(org.clone()), &new_balance);
         extend_instance_ttl(&env);
+
+        ExtensionCharged { org: org.clone(), cost, balance: new_balance }.publish(&env);
 
         Ok(())
     }
