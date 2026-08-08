@@ -198,4 +198,37 @@ impl ExtenderContract {
 
         Ok(())
     }
+
+    /// Returns the org's prepaid balance in stroops (0 when never funded).
+    ///
+    /// Read-only: does **not** require auth.
+    pub fn get_balance(env: Env, org: Address) -> i128 {
+        get_balance(&env, &org)
+    }
+
+    /// Replaces the operator (keeper) address. The injected native asset
+    /// address is preserved.
+    ///
+    /// # Auth
+    ///
+    /// Requires auth from the **current** operator.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::NotOperator`] if the contract is not initialized (no
+    /// operator is configured yet).
+    pub fn set_operator(env: Env, new_operator: Address) -> Result<(), Error> {
+        let op = load_operator(&env)?;
+        op.operator.require_auth();
+
+        env.storage().instance().set(
+            &DataKey::Operator,
+            &Operator {
+                operator: new_operator,
+                native_asset: op.native_asset,
+            },
+        );
+        extend_instance_ttl(&env);
+        Ok(())
+    }
 }
