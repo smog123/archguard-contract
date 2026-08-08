@@ -214,4 +214,59 @@ impl RegistryContract {
 
         Ok(())
     }
+
+    /// Updates the extension policy of an existing watched entry.
+    ///
+    /// Only the entry's owning org can update its policy.
+    ///
+    /// # Auth
+    ///
+    /// Requires auth from `org` (the entry owner).
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::OrgNotFound`] if the org is not registered.
+    /// - [`Error::EntryNotFound`] if no entry exists with `entry_id`.
+    /// - [`Error::NotEntryOwner`] if the entry belongs to a different org.
+    /// - [`Error::InvalidThreshold`] if `extend_threshold_ledgers` is not
+    ///   strictly below `extend_to_ledgers`.
+    pub fn update_entry_policy(
+        env: Env,
+        org: Address,
+        entry_id: u64,
+        extend_threshold_ledgers: u32,
+        extend_to_ledgers: u32,
+        auto_extend: bool,
+    ) -> Result<(), Error> {
+        org.require_auth();
+
+        env.storage()
+            .instance()
+            .get::<DataKey, OrgConfig>(&DataKey::Org(org.clone()))
+            .ok_or(Error::OrgNotFound)?;
+
+        let mut entry = env
+            .storage()
+            .persistent()
+            .get::<DataKey, WatchedEntry>(&DataKey::WatchedEntry(entry_id))
+            .ok_or(Error::EntryNotFound)?;
+        if entry.org != org {
+            return Err(Error::NotEntryOwner);
+        }
+        if extend_threshold_ledgers >= extend_to_ledgers {
+            return Err(Error::InvalidThreshold);
+        }
+
+        entry.extend_threshold_ledgers = extend_threshold_ledgers;
+        entry.extend_to_ledgers = extend_to_ledgers;
+        entry.auto_extend = auto_extend;
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::WatchedEntry(entry_id), &entry);
+        extend_persistent_ttl(&env, &DataKey::WatchedEntry(entry_id));
+        extend_instance_ttl(&env);
+
+        Ok(())
+    }
 }
