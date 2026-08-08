@@ -383,3 +383,94 @@ fn test_update_entry_policy_requires_auth() {
     client.init();
     client.update_entry_policy(&Address::generate(&env), &1, &1_000, &10_000, &true);
 }
+
+#[test]
+fn test_deactivate_org() {
+    let (env, contract_id, org, _admin, _webhook) = setup();
+    let client = RegistryContractClient::new(&env, &contract_id);
+
+    client.deactivate_org(&org);
+
+    // org_deactivated event with the org as topic.
+    let (topics, _) = emitted_event(&env, &contract_id, 0);
+    assert_eq!(
+        topics,
+        vec![&env, event_name(&env, "org_deactivated"), org.clone().into_val(&env)]
+    );
+
+    // Deactivating an already-inactive org is a no-op success.
+    client.deactivate_org(&org);
+}
+
+#[test]
+fn test_deactivate_org_not_found() {
+    let (env, contract_id, _org, _admin, _webhook) = setup();
+    let stranger = Address::generate(&env);
+    let client = RegistryContractClient::new(&env, &contract_id);
+    assert_eq!(
+        client.try_deactivate_org(&stranger),
+        Err(Ok(Error::OrgNotFound))
+    );
+}
+
+#[test]
+#[should_panic]
+fn test_deactivate_org_requires_auth() {
+    let env = Env::default();
+    let contract_id = env.register(RegistryContract, ());
+    let client = RegistryContractClient::new(&env, &contract_id);
+    client.init();
+    client.deactivate_org(&Address::generate(&env));
+}
+
+#[test]
+fn test_get_org_entries_and_get_entry() {
+    let (env, contract_id, org, _admin, _webhook) = setup();
+    let client = RegistryContractClient::new(&env, &contract_id);
+
+    let w1 = Address::generate(&env);
+    let w2 = Address::generate(&env);
+    let id1 = client.add_watched_entry(
+        &org, &w1, &Durability::Persistent, &None::<Bytes>, &1_000, &10_000, &true,
+    );
+    let key = Bytes::from_slice(&env, &[9, 8, 7]);
+    let id2 = client.add_watched_entry(
+        &org, &w2, &Durability::Instance, &Some(key.clone()), &5_000, &50_000, &false,
+    );
+
+    let entries = client.get_org_entries(&org);
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries.get(0).unwrap().id, id1);
+    assert_eq!(entries.get(0).unwrap().contract_id, w1);
+    assert_eq!(entries.get(0).unwrap().durability, Durability::Persistent);
+    assert_eq!(entries.get(1).unwrap().id, id2);
+    assert_eq!(entries.get(1).unwrap().contract_id, w2);
+    assert_eq!(entries.get(1).unwrap().durability, Durability::Instance);
+    assert_eq!(entries.get(1).unwrap().key, Some(key));
+
+    let entry = client.get_entry(&id2);
+    assert_eq!(entry.id, id2);
+    assert_eq!(entry.extend_threshold_ledgers, 5_000);
+    assert_eq!(entry.extend_to_ledgers, 50_000);
+
+    // Unknown org / unknown id (matches! — WatchedEntry has no PartialEq).
+    assert!(matches!(
+        client.try_get_org_entries(&Address::generate(&env)),
+        Err(Ok(Error::OrgNotFound))
+    ));
+    assert!(matches!(client.try_get_entry(&999), Err(Ok(Error::EntryNotFound))));
+}
+
+#[test]
+fn test_reads_do_not_require_auth() {
+    let env = Env::default();
+    let contract_id = env.register(RegistryContract, ());
+    let client = RegistryContractClient::new(&env, &contract_id);
+    client.init();
+    // No mock_all_auths: reads must never require auth.
+    assert!(matches!(
+        client.try_get_org_entries(&Address::generate(&env)),
+        Err(Ok(Error::OrgNotFound))
+    ));
+    assert!(matches!(client.try_get_entry(&1), Err(Ok(Error::EntryNotFound))));
+}
