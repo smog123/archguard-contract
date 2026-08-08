@@ -8,7 +8,7 @@ mod test;
 
 use errors::Error;
 use soroban_sdk::{contract, contractimpl, token::TokenClient, Address, Env};
-use types::{DataKey, Operator};
+use types::{DataKey, InsufficientBalance, Operator};
 
 /// Re-extend a stored entry once its remaining TTL drops below this many
 /// ledgers (~1 day at 5s/ledger).
@@ -142,6 +142,55 @@ impl ExtenderContract {
         token.transfer(&env.current_contract_address(), &org, &amount);
 
         let new_balance = balance - amount;
+        env.storage()
+            .instance()
+            .set(&DataKey::OrgBalance(org.clone()), &new_balance);
+        extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Records a keeper-charged extension cost against the org's prepaid
+    /// balance, in stroops.
+    ///
+    /// The actual TTL extension happens off-chain via `ExtendFootprintTTLOp`
+    /// (that ledger operation must be the sole operation of its
+    /// transaction, so it cannot be wrapped inside a contract-to-contract
+    /// call); the keeper calls this afterwards to debit the org.
+    ///
+    /// # Auth
+    ///
+    /// Requires auth from the **operator** (the keeper), not the org — the
+    /// keeper is the one charging the org for extension work it performed.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::NotOperator`] if the contract is not initialized.
+    /// - [`Error::InvalidAmount`] if `cost < 0`.
+    ///
+    /// # Underfunded orgs — deliberate design choice
+    ///
+    /// When the org's balance is less than the cost, the transaction does
+    /// **not** revert: the contract emits `insufficient_balance` and
+    /// returns `Ok(())` with the balance unchanged, so the keeper learns
+    /// the org is underfunded without a destructive rollback. (Returning
+    /// `Err(Error::InsufficientBalance)` would revert the whole call and
+    /// hide the very information the keeper needs to alert the org.)
+    pub fn record_extension_cost(env: Env, org: Address, cost: i128) -> Result<(), Error> {
+        let op = load_operator(&env)?;
+        op.operator.require_auth();
+
+        if cost < 0 {
+            return Err(Error::InvalidAmount);
+        }
+
+        let balance = get_balance(&env, &org);
+        if balance < cost {
+            InsufficientBalance { org: org.clone(), cost, balance }.publish(&env);
+            return Ok(());
+        }
+
+        let new_balance = balance - cost;
         env.storage()
             .instance()
             .set(&DataKey::OrgBalance(org.clone()), &new_balance);
