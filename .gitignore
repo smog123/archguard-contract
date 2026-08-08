@@ -1,5 +1,8 @@
 # Rust build output
 /target
 
+# Soroban test snapshot artifacts
+**/test_snapshots
+
 # Editor artifacts
 *.rs.bk
